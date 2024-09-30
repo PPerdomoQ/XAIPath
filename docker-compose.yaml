@@ -1,0 +1,17 @@
+version: '3'
+services:
+  predict:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./repo/:/usr/src/predict/repo
+    networks:
+      - predict-public
+    ports:
+      - "8000:8000"
+networks:
+  predict-public:
+    driver: bridge
+volumes:
+  db:

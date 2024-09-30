@@ -1,0 +1,9 @@
+networkx
+matplotlib==3.8.1
+numpy
+pandas
+torch_geometric==2.4.0
+shiny==0.6.0
+torch_sparse -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
+torch_cluster -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
+torch_scatter -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
