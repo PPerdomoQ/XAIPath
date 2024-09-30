@@ -1,4 +1,4 @@
-# Repo4EU ShinyApp
+# GREP-DR 
 
 This repository provides a ShinyApp for making predictions and generating explanations using a machine learning model. The application is containerized using Docker for easy deployment.
 
@@ -31,7 +31,7 @@ Before you begin, ensure you have met the following requirements:
   - `nodes.pkl`
   - `graph.pkl`
 
-  **Download Link**: [Download Model Files](http://example.com/download)
+  **Download Link**: [Download Model Files](https://zenodo.org/uploads/13860397)
 
 ## Installation
 
@@ -40,13 +40,13 @@ Follow these steps to set up and run the application:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/repo4eu-shinyapp.git
+git clone https://github.com/PPerdomo/XAI_paper.git
 cd repo4eu-shinyapp
 ```
 
 ### 2. Download Model Files
 
-Download the `nodes.pkl` and `graph.pkl` files from [this link](http://example.com/download) and place them in the project directory.
+Download the `nodes.pkl` and `graph.pkl` files from [this link](https://zenodo.org/uploads/13860397) and place them in the project directory.
 
 ### 3. Build the Docker Image
 
@@ -91,7 +91,6 @@ The application consists of three main tabs:
 - **Input**:
   - **Disorder**: Enter the MONDO ID of the disorder (e.g., `mondo.0005015`).
   - **K Value**: Adjust the slider to set the longest shortest distance between the drug and disease (range from 2 to 5).
-- **Action**: Click on the **Update table** button.
 - **Output**: A table displaying the top predicted drug candidates.
 
 #### 2. Explanations
@@ -99,14 +98,12 @@ The application consists of three main tabs:
 - **Input**:
   - **Disorder**: Enter the MONDO ID of the disorder.
   - **Drug**: Enter the DrugBank ID of the drug (e.g., `drugbank.DB09043`).
-- **Action**: Click on the **Update table** button.
 - **Output**: A table displaying explanations for the specified drug-disease pair.
 
 #### 3. Plot Explanation
 
 - **Input**:
   - **Explanation ID**: Enter the ID of the explanation you wish to plot (as obtained from the Explanations tab).
-- **Action**: Click on the **Update plot** button.
 - **Output**: A graphical visualization of the selected explanation.
 
 ## Files in the Repository
