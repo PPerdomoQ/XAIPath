@@ -1,4 +1,4 @@
-# XAI-DR 
+# XAIPath 
 
 This repository provides a ShinyApp for making predictions and generating explanations using a machine learning model. The application is containerized using Docker for easy deployment.
 
