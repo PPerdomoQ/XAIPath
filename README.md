@@ -1,9 +1,8 @@
-# XAIPath 
+# XAIPath
 
 This repository provides a ShinyApp for making predictions and generating explanations using a machine learning model. The application is containerized using Docker for easy deployment.
 
 ## Table of Contents
-
 - [Introduction](#introduction)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
@@ -13,128 +12,111 @@ This repository provides a ShinyApp for making predictions and generating explan
 - [License](#license)
 
 ## Introduction
-
 The Repo4EU ShinyApp allows users to:
 
 - **Predictions**: Predict potential drug candidates for a given disorder.
 - **Explanations**: Generate explanations for the predictions made by the model.
 - **Plot Explanations**: Visualize the explanations in the form of graphs.
 
-## Prerequisites
+Two additional notebooks are included:
 
+- **DrugMech_Subset.ipynb**: Filters the DrugMech dataset to generate the subset used to evaluate the model.
+- **DrugMech_Evaluation.ipynb**: Uses the generated filtered dataset to evaluate the model’s performance.
+
+> **Important:** You must download the updated DrugMech dataset from the DrugMech GitHub repository to run these notebooks.
+
+## Prerequisites
 Before you begin, ensure you have met the following requirements:
 
-- **Docker**: Install Docker on your machine. You can download it from the [official Docker website](https://www.docker.com/get-started).
-
-- **Model Files**: Download the following required files and place them in the root directory of the project:
-
+- **Docker**: Install Docker from the [official website](https://www.docker.com/get-started).
+- **Model Files**: Download and place the following files in the root directory:
   - `nodes.pkl`
   - `graph.pkl`
 
-  **Download Link**: [Download Model Files](https://zenodo.org/uploads/13860397)
+**Download Link**: <https://zenodo.org/uploads/13860397>
 
 ## Installation
 
-Follow these steps to set up and run the application:
-
 ### 1. Clone the Repository
-
 ```bash
 git clone https://github.com/PPerdomo/XAI_paper.git
 cd repo4eu-shinyapp
 ```
 
 ### 2. Download Model Files
+Download `nodes.pkl` and `graph.pkl` from:
+<https://zenodo.org/uploads/13860397>
 
-Download the `nodes.pkl` and `graph.pkl` files from [this link](https://zenodo.org/uploads/13860397) and place them in the project directory.
+Place them in the project root directory.
 
 ### 3. Build the Docker Image
-
-Build the Docker image using the provided `Dockerfile`.
-
 ```bash
 docker build -t repo4eu-shinyapp .
 ```
 
 ### 4. Run the Docker Container
 
-You can run the container using `docker-compose` or directly with `docker run`.
-
 #### Using docker-compose
-
 ```bash
 docker-compose up
 ```
 
 #### Using docker run
-
 ```bash
 docker run -p 8000:8000 repo4eu-shinyapp
 ```
 
-The application will be accessible at `http://localhost:8000`.
+The application will be available at:  
+**http://localhost:8000**
 
 ## Usage
 
-Once the application is running, follow these steps to use it:
-
 ### Access the Application
-
-- Open your web browser and navigate to `http://localhost:8000`.
+Open your browser and go to: **http://localhost:8000**
 
 ### Navigate Through Tabs
 
-The application consists of three main tabs:
-
 #### 1. Predictions
-
 - **Input**:
-  - **Disorder**: Enter the MONDO ID of the disorder (e.g., `mondo.0005015`).
-  - **K Value**: Adjust the slider to set the longest shortest distance between the drug and disease (range from 2 to 5).
-- **Output**: A table displaying the top predicted drug candidates.
+  - **Disorder**: MONDO ID (e.g., `mondo.0005015`)
+  - **K Value**: Slider (2–5)
+- **Output**: Table of top predicted drug candidates.
 
 #### 2. Explanations
-
 - **Input**:
-  - **Disorder**: Enter the MONDO ID of the disorder.
-  - **Drug**: Enter the DrugBank ID of the drug (e.g., `drugbank.DB09043`).
-- **Output**: A table displaying explanations for the specified drug-disease pair.
+  - **Disorder**: MONDO ID
+  - **Drug**: DrugBank ID (e.g., `drugbank.DB09043`)
+- **Output**: Explanation table for the drug–disease pair.
 
 #### 3. Plot Explanation
-
-- **Input**:
-  - **Explanation ID**: Enter the ID of the explanation you wish to plot (as obtained from the Explanations tab).
-- **Output**: A graphical visualization of the selected explanation.
+- **Input**: Explanation ID (from Explanations tab)
+- **Output**: Graphical explanation visualization.
 
 ## Files in the Repository
 
-- `app.py`: The main ShinyApp code.
-- `repo4eu.py`: Module containing helper functions for the application.
-- `Dockerfile`: Instructions for building the Docker image.
-- `docker-compose.yaml`: Configuration file for Docker Compose.
-- `model_version_3.1_mashup.pth`: Pre-trained machine learning model.
-- `req.txt`: List of Python dependencies.
-- `nodes.pkl`: Node data file (to be downloaded).
-- `graph.pkl`: Graph data file (to be downloaded).
+- `app.py`: Main ShinyApp code.
+- `repo4eu.py`: Helper functions.
+- `Dockerfile`
+- `docker-compose.yaml`
+- `model_version_3.1_mashup.pth`: Pre-trained model.
+- `req.txt`: Python dependencies.
+- `nodes.pkl`: Node data file (download required).
+- `graph.pkl`: Graph data file (download required).
+- `DrugMech_Subset.ipynb`: Filters DrugMech dataset.
+- `DrugMech_Evaluation.ipynb`: Evaluates model with filtered dataset.
 
 ## Troubleshooting
 
-- **Port Conflicts**: If port `8000` is already in use, you can change the port mapping in the `docker run` command:
-
+- **Port Conflicts**: Change port mapping:
   ```bash
   docker run -p [your_port]:8000 repo4eu-shinyapp
   ```
-
-- **Docker Permissions**: If you encounter permission issues with Docker commands, try running them with `sudo` or ensure your user is added to the Docker group.
-
-- **Missing Files**: Ensure that `nodes.pkl` and `graph.pkl` are placed in the root directory of the project.
-
-- **Application Errors**: Check the Docker container logs for any errors:
-
+- **Docker Permissions**: Try using `sudo` or add yourself to the Docker group.
+- **Missing Files**: Ensure required `.pkl` files are in the root directory.
+- **Errors**: Check logs:
   ```bash
   docker logs [container_id]
   ```
 
 ## License
-
 This project is licensed under the [MIT License](LICENSE).
