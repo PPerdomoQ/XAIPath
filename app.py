@@ -25,11 +25,25 @@ app_ui = ui.page_fluid(
             ui.output_table("summary_data"), 
             ),
             
-        	ui.nav("Explanations", 
-            ui.input_text("diso_2", "Enter disorder (you should introduce the MONDO ID in lowercase, ie. mondo.0005015):", placeholder='text'),
-            ui.input_text("drug", "Enter disorder (you should introduce the DB ID in lowercase, ie. drugbank.DB09043):", placeholder='text'),
-            ui.input_action_button("go_2", "Update table"),
-            ui.output_table("explanations_scores"), 
+        	ui.nav(
+                "Explanations", 
+                ui.input_text(
+                    "diso_2",
+                    "Enter disorder (you should introduce the MONDO ID in lowercase, ie. mondo.0005015):",
+                    placeholder='text'
+                ),
+                ui.input_text(
+                    "drug",
+                    "Enter disorder (you should introduce the DB ID in lowercase, ie. drugbank.DB09043):",
+                    placeholder='text'
+                ),
+                ui.input_checkbox(
+                    "use_minhash",
+                    "Use boosted MinHash explanations",
+                    value=False,
+                ),
+                ui.input_action_button("go_2", "Update table"),
+                ui.output_table("explanations_scores"),
             ),
     
     
@@ -71,11 +85,24 @@ def server(input, output, session):
     
         diso = input.diso_2()
         drug = input.drug()
+        use_minhash = input.use_minhash()
+
         if diso in G.nodes() and drug in G.nodes():
-        	path_list, scores = repo4eu.best_explanations(G, nodes, model, drug, diso, 3)
-        	return scores[:10]
-        else: 	
-        	return print(drug, diso)
+            if use_minhash:
+                # Use a copy so the boosted method can safely remove nodes
+                G_local = G.copy()
+                path_list, scores = repo4eu.best_explanations_minhash(
+                    G_local, nodes, model, drug, diso, 3
+                )
+            else:
+                # Original exhaustive explanations
+                path_list, scores = repo4eu.best_explanations(
+                    G, nodes, model, drug, diso, 3
+                )
+
+            return scores[:10]
+        else:
+            return print(drug, diso)
         	
 
     @output

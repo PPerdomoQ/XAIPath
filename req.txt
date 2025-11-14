@@ -1,5 +1,7 @@
 networkx
 matplotlib==3.8.1
+datasketch==1.6.5
+scikit-learn==1.4.2
 numpy
 pandas
 torch_geometric==2.4.0

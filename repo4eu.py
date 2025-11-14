@@ -1,31 +1,41 @@
 import networkx as nx
-import requests
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.cm as cm
-import json
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-import random
+from sklearn.cluster import KMeans
 import pandas as pd
 import torch.nn.functional as F
 from torch_geometric.data import HeteroData
 import tqdm
 import torch_geometric.transforms as T
-from torch_geometric.loader import LinkNeighborLoader
-from torch_geometric.nn import SAGEConv, to_hetero
+from torch_geometric.nn import SAGEConv, to_hetero, GATConv
 import torch.nn.functional as F
 from torch import Tensor
 import pickle
+from datasketch import MinHash, MinHashLSH
+import random
 
 
+class DisjointSet:
+    def __init__(self):
+        self.parent = {}
 
-from torch_geometric.nn import SAGEConv, to_hetero
-import torch.nn.functional as F
-from torch import Tensor
+    def find(self, x):
+        # Path compression
+        if self.parent.get(x, x) != x:
+            self.parent[x] = self.find(self.parent[x])
+        else:
+            self.parent.setdefault(x, x)
+        return self.parent[x]
+
+    def union(self, x, y):
+        xroot = self.find(x)
+        yroot = self.find(y)
+        if xroot != yroot:
+            self.parent[yroot] = xroot
+
 class GNN(torch.nn.Module):
     def __init__(self, hidden_channels):
         super().__init__()
@@ -185,7 +195,7 @@ def create_new_graph(nodes, subgraph):
         data['protein', 'ProteinHasGOAnnotation', 'go'].edge_index = torch.Tensor(new_edges_df.loc[new_edges_df['Value'] == 'ProteinHasGOAnnotation', ['Source', 'Target']].to_numpy().T).to(torch.int64)
         data['protein', 'ProteinInteractsWithProtein', 'protein'].edge_index = torch.Tensor(new_edges_df.loc[new_edges_df['Value'] == 'ProteinInteractsWithProtein', ['Source', 'Target']].to_numpy().T).to(torch.int64)
         data['side_effect', 'SideEffectSameAsPhenotype', 'phenotype'].edge_index = torch.Tensor(new_edges_df.loc[new_edges_df['Value'] == 'SideEffectSameAsPhenotype', ['Source', 'Target']].to_numpy().T).to(torch.int64)
-        data['protein', 'IsIsoformOf', 'protein'].edge_index = torch.Tensor(new_edges_df.loc[new_edges_df['Value'] == 'IsIoformOf', ['Source', 'Target']].to_numpy().T).to(torch.int64)
+        data['protein', 'IsIsoformOf', 'protein'].edge_index = torch.Tensor(new_edges_df.loc[new_edges_df['Value'] == 'IsIsoformOf', ['Source', 'Target']].to_numpy().T).to(torch.int64)
         data['drug', 'MoleculeSimilarityMolecule', 'drug'].edge_index = torch.Tensor(new_edges_df.loc[new_edges_df['Value'] == 'MoleculeSimilarityMolecule', ['Source', 'Target']].to_numpy().T).to(torch.int64)
 
     
@@ -233,24 +243,24 @@ def initial_candidates_drug(model, nodes, data, drug):
 
 
 def load_model(path): 
-    
-    
     G = load_graph()
-    
     nodes = pd.read_pickle('nodes_v3.1.pkl')
-    
     data = create_new_graph(nodes, G)
-    
+
     print('Loading model...')
-    
-    model = Model(hidden_channels=128, data = data)
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-    
+
+    # Decide device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # Create model on that device
+    model = Model(hidden_channels=128, data=data).to(device)
+
+    # Load checkpoint onto that device
+    state_dict = torch.load(path, map_location=device)
+    model.load_state_dict(state_dict)
+
     print('Model loaded!')
-    
     return model, nodes, data, G
 
 
@@ -625,6 +635,133 @@ def best_explanations(G, nodes, model, drug, diso, k, ind = 0, only_directed = F
     score_df = score_path(path_list, nodes, model, drug, diso)
     
     return path_list, score_df
+    
+
+def best_explanations_minhash(G, nodes, model, drug, diso, k, ind = 0, only_directed = False): 
+
+    nodes_to_remove = []
+    for node, degree in G.degree():
+        if degree > 1000:
+            node_category = nodes.loc[nodes['Nodes Name'] == node, 'Category'].values[0]
+            if node_category != 'drug' and node_category != 'disorder':
+                nodes_to_remove.append(node)
+
+    # Remove the nodes from the graph
+    G.remove_nodes_from(nodes_to_remove)
+    
+    path_list = obtain_path_list_minhash(G, nodes, drug, diso, k, only_directed = only_directed)
+    
+    if len(path_list) == 0: 
+        print('No path of target length')
+        return [] , pd.DataFrame(columns = [['ID'], ['Score']])
+        
+    path_list, score_df = minhash_eval(G, path_list, nodes, model, drug, diso)
+    
+    return path_list, score_df
+
+
+def minhash_eval(G, list_of_lists, nodes, model, drug, diso): 
+    # Convert inner lists to sets for MinHash
+    dataset = [set(inner_list) for inner_list in list_of_lists]
+    print('Initial number of paths:', len(dataset))
+    N = len(dataset)
+    num_perm = 128  # Increased for better discrimination
+    
+    # Create MinHash objects for each set and collect their hashvalues
+    minhashes = []
+    hashvalues = []
+    for i, d in enumerate(dataset):
+        minhash = MinHash(num_perm=num_perm)
+        for elem in d:
+            minhash.update(elem.encode('utf-8'))
+        minhashes.append((i, minhash))  # Save index for later reference
+        hashvalues.append(minhash.hashvalues)
+    
+    hashvalues = np.array(hashvalues)  # Convert list to numpy array
+    print('MinHash objects created and hashvalues collected.')
+    
+    # Decide number of clusters
+    K = int(np.sqrt(N))
+    print(f'Number of clusters to form: {K}')
+    
+    # Use KMeans clustering on hashvalues
+    kmeans = KMeans(n_clusters=K, random_state=0).fit(hashvalues)
+    labels = kmeans.labels_
+    
+    print('KMeans clustering done.')
+    
+    # Build clusters based on labels
+    clusters = {}
+    for idx, label in enumerate(labels):
+        clusters.setdefault(label, []).append(idx)
+    
+    final_clusters = list(clusters.values())
+    print('Final clusters formed.')
+    
+    # Build combined graphs for each cluster
+    clusters_graphs = []
+    edges_dic = nx.get_edge_attributes(G, 'edge_name')
+    for cluster_ids in final_clusters:
+        G_sub = nx.DiGraph()
+        for id in cluster_ids:
+            path = list_of_lists[id]
+            for i in range(0, len(path) -1, 2): 
+                u, v = path[i], path[i+2]
+                if (u, v) in edges_dic:
+                    G_sub.add_edge(u, v, edge_name=edges_dic[(u, v)])
+                elif (v, u) in edges_dic:
+                    G_sub.add_edge(v, u, edge_name=edges_dic[(v, u)])
+        clusters_graphs.append(G_sub)
+    
+    print('Graphs built for each cluster.')
+    
+    # Score each cluster's graph
+    scores_df = score_path(clusters_graphs, nodes, model, drug, diso)
+    
+    # Find the cluster with the highest score
+    best_cluster_idx = scores_df.loc[scores_df['Score'].idxmax(), 'ID']
+    
+    path_list = []
+    
+    for id in final_clusters[best_cluster_idx]: 
+        G_sub = nx.DiGraph()
+        path = list_of_lists[id]
+        for i in range(0, len(path) -1, 2): 
+            if (path[i], path[i+2]) in edges_dic:
+                G_sub.add_edge(path[i], path[i+2], edge_name=edges_dic[(path[i], path[i+2])])
+            else:
+                G_sub.add_edge(path[i+2], path[i], edge_name=edges_dic[(path[i+2], path[i])])
+    
+        path_list.append(G_sub)
+    
+    y = score_path(path_list, nodes, model, drug, diso)
+    
+    return path_list, y 
+
+
+def obtain_path_list_minhash(G, nodes, drug, diso, k, only_directed = False): 
+    
+    edges_dic = nx.get_edge_attributes(G, 'edge_name')
+
+    list_of_lists = []
+
+    if not only_directed: 
+
+        G = G.to_undirected()
+
+    for path in nx.all_simple_paths(G, source = drug, target= diso, cutoff = k): #Can also apply G.to_undirected(), takes more time but allows for undirected explanations
+        
+        fancy_path = [path[0]]
+        for i in range(len(path) -1): 
+            if (path[i], path[i+1]) in edges_dic: 
+                fancy_path.append(edges_dic[(path[i], path[i+1])])
+                fancy_path.append(path[i+1])
+            else: 
+                fancy_path.append(edges_dic[(path[i+1], path[i])])
+                fancy_path.append(path[i+1])
+        list_of_lists.append(fancy_path)
+    
+    return list_of_lists
 
 
 # def plot_explanation(path_list, score_df, ind, fz = 6):
@@ -679,6 +816,20 @@ def plot_explanation(path_list, score_df, nodes_df, ind, fz=6):
 
 
 
+class GAT_GNN(torch.nn.Module):
+    def __init__(self, hidden_channels):
+        super().__init__()
+        # IMPORTANT: disable add_self_loops for use with hetero graphs that contain bipartite edge types
+        self.conv1 = GATConv(hidden_channels, hidden_channels, add_self_loops=False)
+        self.conv2 = GATConv(hidden_channels, hidden_channels, add_self_loops=False)
+        # note: conv3 reduces to 64 dims (keep consistent with downstream uses)
+        self.conv3 = GATConv(hidden_channels, 64, add_self_loops=False)
+
+    def forward(self, x: Tensor, edge_index: Tensor) -> Tensor:
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
+        x = self.conv3(x, edge_index)
+        return x
 
 
 
@@ -708,21 +859,6 @@ def plot_explanation(path_list, score_df, nodes_df, ind, fz=6):
 
 
 
-
-def fine_tune(model, G_list):
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    criterion  = ...
-    
-    for epoch in range(100): 
-        for G_sub, y in G_list: 
-            data = create_data_loader(G_sub)
-            pred = model(G_sub)
-            loss = criterion(pred, y)
-            loss.backpropagate()
-    
     
     
     
