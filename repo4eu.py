@@ -527,13 +527,14 @@ def create_new_graph_2(nodes, subgraph):
     
     
 def initial_candidates_2(model, nodes, data, diso, drug):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     with torch.no_grad():
         drug = nodes[nodes['Nodes Name'] == drug]['Index'].iloc[0]
         diso = nodes[nodes['Nodes Name'] == diso]['Index'].iloc[0]
         
         data['drug', 'DrugHasIndication', 'disorder'].edge_label_index = torch.tensor([[drug], [diso]])
         
-        pred = model(data)
+        pred = model(data.to(device))
 
     return pred
     

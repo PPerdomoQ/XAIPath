@@ -1,19 +1,76 @@
 from shiny import App, render, ui, reactive
 import repo4eu
 import networkx as nx
-import io
-import base64
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import matplotlib.cm as cm
-import time
 import asyncio
+import html as html_lib
+import re
+from pyvis.network import Network
+import urllib.parse
 
 model, nodes, data, G = repo4eu.load_model('model_version_3.1_mashup.pth')
 
-
+# Global variables for cross-function state
+path_list = None
+scores = None
 
 app_ui = ui.page_fluid(
+    ui.tags.head(
+        ui.tags.style("""
+            /* Spinner Styles */
+            .spinner {
+                border: 4px solid rgba(0, 0, 0, 0.1);
+                width: 36px;
+                height: 36px;
+                border-radius: 50%;
+                border-left-color: #09f;
+                animation: spin 1s linear infinite;
+                display: inline-block;
+                vertical-align: middle;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            .loading-container {
+                display: none; /* Hidden by default */
+                align-items: center;
+                justify-content: center;
+                padding: 15px;
+                margin: 10px 0;
+                background-color: #f8f9fa;
+                border-radius: 8px;
+                border: 1px solid #e9ecef;
+                color: #495057;
+                font-weight: 500;
+                gap: 10px;
+            }
+        """),
+        ui.tags.script("""
+            $(document).on('click', '#go_2', function() {
+                $('#loading-spinner-container').css('display', 'flex');
+            });
+            
+            $(document).on('shiny:value', function(event) {
+                if (event.name === 'interactive_graph') {
+                    $('#loading-spinner-container').hide();
+                }
+            });
+            
+            $(document).on('shiny:error', function(event) {
+                if (event.name === 'interactive_graph') {
+                    $('#loading-spinner-container').hide();
+                }
+            });
+            
+            Shiny.addCustomMessageHandler('trigger_plot', function(message) {
+                // Wait a bit to ensure Shiny inputs are updated before clicking
+                setTimeout(function() {
+                    $('#go_2').click();
+                }, 500);
+            });
+        """)
+    ),
     ui.navset_tab(
         ui.nav("Predictions", 
             ui.input_text("diso", "Enter disorder (you should introduce the MONDO ID in lowercase, ie. mondo.0005015):", placeholder='text'),
@@ -25,129 +82,320 @@ app_ui = ui.page_fluid(
             ui.output_table("summary_data"), 
             ),
             
-        	ui.nav(
-                "Explanations", 
-                ui.input_text(
-                    "diso_2",
-                    "Enter disorder (you should introduce the MONDO ID in lowercase, ie. mondo.0005015):",
-                    placeholder='text'
+        ui.nav(
+            "Explanations",
+            ui.row(
+                ui.column(4,
+                    ui.input_text(
+                        "diso_2",
+                        "Enter disorder (MONDO ID):",
+                        placeholder='mondo.0005015'
+                    )
                 ),
-                ui.input_text(
-                    "drug",
-                    "Enter disorder (you should introduce the DB ID in lowercase, ie. drugbank.DB09043):",
-                    placeholder='text'
+                ui.column(4,
+                    ui.input_text(
+                        "drug",
+                        "Enter drug (DB ID):",
+                        placeholder='drugbank.DB09043'
+                    )
                 ),
-                ui.input_checkbox(
-                    "use_minhash",
-                    "Use boosted MinHash explanations",
-                    value=False,
-                ),
-                ui.input_action_button("go_2", "Update table"),
-                ui.output_table("explanations_scores"),
+                ui.column(4,
+                    ui.input_slider("k_2", "Search depth (max hops):", min=2, max=5, value=3),
+                )
             ),
-    
-    
-    		ui.nav("Plot Explanation", 
-            ui.input_text("exp_id", "Enter the ID of the explanation you would like to plot", placeholder='text'),
-            ui.input_action_button("go_3", "Update plot"),
-            ui.output_image("plot_explanation"), 
+            ui.row(
+                ui.column(8,
+                    ui.input_checkbox(
+                        "use_minhash",
+                        "Use boosted MinHash explanations",
+                        value=False,
+                    ),
+                    ui.input_action_button("go_2", "Plot Explanations", class_="btn-primary"),
+                ),
+                ui.column(4,
+                    ui.input_select(
+                        "plot_mode",
+                        "Select view:",
+                        choices={
+                            "merged": "Top 5 (Merged)",
+                            "0": "Path 1",
+                            "1": "Path 2",
+                            "2": "Path 3",
+                            "3": "Path 4",
+                            "4": "Path 5"
+                        }
+                    )
+                )
             ),
+            ui.tags.div(
+                ui.div(class_="spinner"),
+                ui.span("Calculating and plotting... Please wait."),
+                id="loading-spinner-container",
+                class_="loading-container"
+            ),
+            ui.tags.div(
+                ui.output_ui("interactive_graph"),
+                style="height: 750px; width: 100%; border: 1px solid #ddd; border-radius: 4px; overflow: hidden; margin-top: 15px;"
+            ),
+        ),
     ),
 )
     
 
+def get_pyvis_utils_js():
+    """Returns the hardcoded content of pyvis's utils.js to ensure reliable injection."""
+    return """
+function drawGraph() {
+    for (var i = 0; i < network.body.data.nodes.length; i++) {
+        network.body.data.nodes._data[i].hidden = false;
+    }
+    for (var i = 0; i < network.body.data.edges.length; i++) {
+        network.body.data.edges._data[i].hidden = false;
+    }
+    network.redraw();
+}
 
+function findNode(id) {
+    return network.body.data.nodes._data[id];
+}
+"""
 
 def server(input, output, session):
+
     @output
     @render.table
     @reactive.event(input.go, ignore_none=False)
     def summary_data(): 
         # Get the value of the input field 'diso'
-        
         diso = input.diso()
         k = input.k()
-        
 
         # Check if the 'diso' value is not empty before fetching candidates
         if diso in G.nodes():
             df = repo4eu.get_candidates(model, nodes, data, G, diso, k = k)[:10]
             return df
-       	else: 
-       	    return print(diso) 
-       	    
+        else: 
+            return None 
 
-    @output
-    @render.table
-    @reactive.event(input.go_2, ignore_none=False)
-    def explanations_scores():
-        global path_list, scores
+    # URL Deep Linking Logic
+    url_loaded = reactive.Value(False)
     
-        diso = input.diso_2()
-        drug = input.drug()
-        use_minhash = input.use_minhash()
+    @reactive.Effect
+    async def _():
+        if url_loaded():
+            return
+            
+        # Get query parameters from the URL
+        search = session.input[".clientdata_url_search"]()
+        if not search:
+            return
+            
+        params = urllib.parse.parse_qs(search.lstrip('?'))
+        drug = params.get("drug", [None])[0]
+        diso = params.get("diso", [None])[0]
+        
+        if drug and diso:
+            print(f"Deep link detected: Drug={drug}, Disorder={diso}", flush=True)
+            # Update inputs
+            ui.update_text("drug", value=drug)
+            ui.update_text("diso_2", value=diso)
+            ui.update_slider("k_2", value=3)
+            ui.update_checkbox("use_minhash", value=True)
+            
+            # Mark as loaded so we don't re-trigger on other reactive updates
+            url_loaded.set(True)
+            
+            # Trigger the JS click event to show spinner and start computation
+            await session.send_custom_message("trigger_plot", {})
 
-        if diso in G.nodes() and drug in G.nodes():
-            if use_minhash:
-                # Use a copy so the boosted method can safely remove nodes
-                G_local = G.copy()
-                path_list, scores = repo4eu.best_explanations_minhash(
-                    G_local, nodes, model, drug, diso, 3
-                )
+    # Calculated paths storage
+    calculated_paths = reactive.Value(None)
+
+    @reactive.Effect
+    @reactive.event(input.go_2)
+    async def compute_explanations():
+        try:
+            diso = input.diso_2().strip()
+            drug = input.drug().strip()
+            k = input.k_2()
+            use_minhash = input.use_minhash()
+
+            print(f"Computing explanations for: Drug={drug}, Disorder={diso}, Depth={k}")
+            
+            if diso in G.nodes() and drug in G.nodes():
+                if use_minhash:
+                    # Run CPU-intensive task in a separate thread to keep UI responsive
+                    paths, _ = await asyncio.to_thread(
+                        repo4eu.best_explanations_minhash, G.copy(), nodes, model, drug, diso, k
+                    )
+                else:
+                    paths, _ = await asyncio.to_thread(
+                        repo4eu.best_explanations, G, nodes, model, drug, diso, k
+                    )
+                print(f"Found {len(paths)} paths.", flush=True)
+                calculated_paths.set(paths)
             else:
-                # Original exhaustive explanations
-                path_list, scores = repo4eu.best_explanations(
-                    G, nodes, model, drug, diso, 3
-                )
-
-            return scores[:10]
-        else:
-            return print(drug, diso)
-        	
+                errors = []
+                if diso not in G.nodes():
+                    errors.append(f"Disorder '{diso}' not found.")
+                if drug not in G.nodes():
+                    errors.append(f"Drug '{drug}' not found.")
+                
+                error_msg = " ".join(errors)
+                print(error_msg, flush=True)
+                calculated_paths.set(f"Error: {error_msg}")
+        except Exception as e:
+            print(f"Error in compute_explanations: {e}", flush=True)
+            calculated_paths.set(f"Error: Internal calculation error.")
 
     @output
-    @render.image(delete_file=True)
-    @reactive.event(input.go_3, ignore_none=False)
-    def plot_explanation():
-        global path_list, scores
-        try: 
-            plt.clf()
-            edge_labels = {}
-            exp_id = input.exp_id()
-            best_G = path_list[int(exp_id)]
+    @render.ui
+    def interactive_graph():
+        val = calculated_paths()
+        try:
+            if val is None:
+                return ui.HTML('<p style="padding:20px; color:#888;">Enter disorder/drug and click "Plot Explanations" to begin.</p>')
+            
+            if isinstance(val, str) and val.startswith("Error:"):
+                return ui.HTML(f'<p style="padding:20px; color:red;">{val}</p>')
+            
+            paths = val
+            if not paths:
+                return ui.HTML('<p style="padding:20px; color:orange;">No explanation paths found for this pair at the current depth. Try increasing the search depth.</p>')
 
-            edges_dic = nx.get_edge_attributes(best_G, 'edge_name')
-            edge_labels = {edge: edges_dic[edge] for edge in best_G.edges() if edge in edges_dic}
+            mode = input.plot_mode()
+            
+            # Select the subgraph(s) based on mode
+            if mode == "merged":
+                top_n = min(5, len(paths))
+                best_G = nx.compose_all([paths[i] for i in range(top_n)])
+                view_title = f"Top {top_n} Merged Explanations"
+            else:
+                idx = int(mode)
+                if idx >= len(paths):
+                    return ui.HTML(f'<p style="padding:20px;">Explanation path {idx+1} not found.</p>')
+                best_G = paths[idx]
+                view_title = f"Explanation Path {idx+1}"
 
-            # Adjusted for correct node names
+            print(f"Plotting: {view_title} with {best_G.number_of_nodes()} nodes and {best_G.number_of_edges()} edges", flush=True)
+
+            if best_G.number_of_nodes() == 0:
+                return ui.HTML('<p style="padding:20px; color:orange;">The selected subgraph has no nodes to plot.</p>')
+
+            # Build colour map keyed on category for nodes
             node_types = dict(zip(nodes['Nodes Name'], nodes['Category']))
             unique_types = list(set(node_types.values()))
-            colors = cm.tab10.colors
-            type_colors = {node_type: colors[i % len(colors)] for i, node_type in enumerate(unique_types)}
+            mpl_colors = cm.tab10.colors
+            type_colors = {
+                node_type: '#{:02x}{:02x}{:02x}'.format(
+                    int(mpl_colors[i % len(mpl_colors)][0] * 255),
+                    int(mpl_colors[i % len(mpl_colors)][1] * 255),
+                    int(mpl_colors[i % len(mpl_colors)][2] * 255),
+                )
+                for i, node_type in enumerate(unique_types)
+            }
 
-            node_colors = [type_colors.get(node_types.get(node, None), 'lightgray') for node in best_G.nodes()]
-            pos = nx.shell_layout(best_G)
             index_map = dict(zip(nodes['Nodes Name'], nodes['Display Name']))
-            renamed_labels = {node: index_map.get(node, node) for node in best_G.nodes()}
 
-            # Draw the graph with edge labels
+            net = Network(
+                height="680px",
+                width="100%",
+                bgcolor="#ffffff",
+                font_color="#333333",
+                directed=False,
+                notebook=False,
+            )
+            # Use remote CDN to avoid 404 on local lib/vis-network.min.js
+            try:
+                net.set_cdn_resources('remote')
+            except AttributeError:
+                pass
+                
+            net.barnes_hut(spring_length=150, spring_strength=0.005, gravity=-20000)
+
+            for node in best_G.nodes():
+                category = node_types.get(node, "Unknown")
+                color = type_colors.get(category, "#cccccc")
+                label = index_map.get(node, node)
+                net.add_node(
+                    node,
+                    label=label,
+                    title=f"<b>{label}</b><br/>Category: {category}<br/>ID: {node}",
+                    color=color,
+                    size=18,
+                    font={"size": 12, "face": "arial"},
+                )
+
+            edges_dic = nx.get_edge_attributes(best_G, 'edge_name')
+            for u, v in best_G.edges():
+                edge_label = edges_dic.get((u, v), edges_dic.get((v, u), ""))
+                net.add_edge(
+                    u, v, 
+                    label=edge_label, 
+                    title=edge_label,
+                    color="#888888",
+                    width=2,
+                    font={"size": 10}
+                )
+
+            active_categories = {node_types.get(n) for n in best_G.nodes()}
+            cat_items = "".join(
+                f'<span style="display:inline-flex;align-items:center;margin-right:14px;">'
+                f'<span style="width:12px;height:12px;border-radius:2px;background:{color};'
+                f'display:inline-block;margin-right:5px;"></span>'
+                f'<span style="font-size:11px;font-family:arial;">{cat}</span></span>'
+                for cat, color in type_colors.items()
+                if cat in active_categories
+            )
             
-            nx.draw(best_G, pos, labels=renamed_labels, with_labels=True, node_size=500, node_color=node_colors, font_weight='bold', font_size=6)
-            # nx.draw(best_G, pos, with_labels=True, node_size=500, node_color='lightblue', font_weight='bold')
-            nx.draw_networkx_edge_labels(best_G, pos, edge_labels=edge_labels)
+            legend_bar = (
+                f'<div style="padding:8px 10px;background:#fcfcfc;border-bottom:1px solid #eee;'
+                f'font-family:arial;display:flex;align-items:center;justify-content:space-between;">'
+                f'<div><b>{view_title}</b></div>'
+                f'<div style="display:flex;flex-wrap:wrap;"><b>Nodes:</b> &nbsp; {cat_items}</div>'
+                f'</div>'
+            )
 
-            # Create a legend
-            legend_patches = [mpatches.Patch(color=color, label=category) for category, color in type_colors.items()]
-            plt.legend(handles=legend_patches, loc='upper left')
-
-            plt.savefig('./image.png', format='png')
-            img: ImgData = {"src": './image.png', "width": "1000px"}
-        
-            return img
+            html_str = net.generate_html(notebook=False)
             
+            # 1. Strip ALL local library references to prevent 404s
+            # Pyvis generates <script src="lib/..."> or <link href="lib/...">
+            html_str = re.sub(r'<script [^>]*src=["\']lib/[^>]*></script>', '', html_str)
+            html_str = re.sub(r'<link [^>]*href=["\']lib/[^>]*>', '', html_str)
+            
+            # 2. Inject the necessary remote scripts into <head>
+            cdn_scripts = """
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+            <script type="text/javascript">
+            """ + get_pyvis_utils_js() + """
+            </script>
+            """
+            
+            if "</head>" in html_str:
+                html_str = html_str.replace("</head>", cdn_scripts + "</head>")
+                print("SUCCESS: Injected CDN and hardcoded scripts into HTML head.")
+            else:
+                # Fallback if no head tag found
+                html_str = cdn_scripts + html_str
+                print("WARNING: No </head> found, prepending scripts to HTML.")
+
+            escaped = html_lib.escape(html_str, quote=True)
+
+            iframe = (
+                f'<iframe srcdoc="{escaped}" '
+                f'style="width:100%;height:650px;border:none;" '
+                f'sandbox="allow-scripts"></iframe>'
+            )
+
+            return ui.HTML(
+                f'<div style="display:flex;flex-direction:column;height:700px;">'
+                f'{legend_bar}{iframe}</div>'
+            )
+
         except Exception as e:
-            print(f"Error occurred: {e}")
-            return None
+            import traceback
+            traceback.print_exc()
+            return ui.HTML(f'<p style="color:red; padding:20px;">Error rendering graph: {e}</p>')
             
     @output
     @render.text
@@ -159,9 +407,8 @@ def server(input, output, session):
             for i in range(1, 15):
                 p.set(i, message="Computing")
                 await asyncio.sleep(0.1)
-                # Normally use time.sleep() instead, but it doesn't yet work in Pyodide.
-                # https://github.com/pyodide/pyodide/issues/2354
 
         return "Done computing!"
 
 app = App(app_ui, server)
+

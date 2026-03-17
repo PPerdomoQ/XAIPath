@@ -6,6 +6,7 @@ numpy
 pandas
 torch_geometric==2.4.0
 shiny==0.6.0
+pyvis>=0.3.2
 torch_sparse -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
 torch_cluster -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
 torch_scatter -f https://data.pyg.org/whl/torch-2.1.0+cpu.html

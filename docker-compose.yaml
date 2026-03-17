@@ -1,4 +1,3 @@
-version: '3'
 services:
   predict:
     build:
@@ -10,8 +9,17 @@ services:
       - predict-public
     ports:
       - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 networks:
   predict-public:
     driver: bridge
+
 volumes:
   db:
