@@ -15,8 +15,7 @@ This repository provides a ShinyApp for making predictions and generating explan
 The Repo4EU ShinyApp allows users to:
 
 - **Predictions**: Predict potential drug candidates for a given disorder.
-- **Explanations**: Generate explanations for the predictions made by the model.
-- **Plot Explanations**: Visualize the explanations in the form of graphs.
+- **Explanations**: Generate and plot explanations for the predictions made by the model.
 
 Two additional notebooks are included:
 
@@ -86,11 +85,7 @@ Open your browser and go to: **http://localhost:8000**
 - **Input**:
   - **Disorder**: MONDO ID
   - **Drug**: DrugBank ID (e.g., `drugbank.DB09043`)
-- **Output**: Explanation table for the drug–disease pair.
-
-#### 3. Plot Explanation
-- **Input**: Explanation ID (from Explanations tab)
-- **Output**: Graphical explanation visualization.
+- **Output**: Explanation plot for the drug–disease pair.
 
 ## Files in the Repository
 
